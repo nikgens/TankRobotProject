@@ -85,7 +85,7 @@ def defineTrafficSign(image):
         rightBlock = thresh[4*subHeight:9*subHeight, 7*subWidth:9*subWidth]
         topBlock = thresh[2*subHeight:4*subHeight, 3*subWidth:7*subWidth]
 
-        # we now track the fraction of each ROI
+        # we now track the fraction of each ROI. (sum of active pixels)/(total number of pixels)
         leftFraction = np.sum(leftBlock)/(leftBlock.shape[0]*leftBlock.shape[1])
         centerFraction = np.sum(centerBlock)/(centerBlock.shape[0]*centerBlock.shape[1])
         rightFraction = np.sum(rightBlock)/(rightBlock.shape[0]*rightBlock.shape[1])
