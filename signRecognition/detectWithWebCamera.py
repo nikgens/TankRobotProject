@@ -13,8 +13,8 @@ def findTrafficSign():
     After blobs were found it detects the largest square blob, that must be the sign.
     '''
     # define range HSV for blue color of the traffic sign
-    lower_blue = np.array([90,100,70])
-    upper_blue = np.array([110,255,255])
+    lower_blue = np.array([85,100,70])
+    upper_blue = np.array([115,255,255])
 
     while True:
         # grab the current frame
@@ -72,21 +72,24 @@ def findTrafficSign():
                     largestRect = box
             
 
-            # draw contour of the found rectangle on  the original image
-            if largestArea > frameArea*0.02:
-                cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
+        # draw contour of the found rectangle on  the original image
+        if largestArea > frameArea*0.02:
+            cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
             
+
+
+        #if largestRect is not None:
             # cut and warp interesting area
             warped = four_point_transform(mask, [largestRect][0])
             
             # show an image if rectangle was found
             #cv2.imshow("Warped", cv2.bitwise_not(warped))
-			
-			# use function to detect the sign on the found rectangle
+            
+            # use function to detect the sign on the found rectangle
             detectedTrafficSign = identifyTrafficSign(warped)
             #print(detectedTrafficSign)
 
-        if largestRect is not None:
+
             # write the description of the sign on the original image
             cv2.putText(frame, detectedTrafficSign, tuple(largestRect[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         
