@@ -13,12 +13,16 @@ def findTrafficSign():
     After blobs were found it detects the largest square blob, that must be the sign.
     '''
     # define range HSV for blue color of the traffic sign
-    lower_blue = np.array([89,102,54])
-    upper_blue = np.array([124,255,255])
+    lower_blue = np.array([90,100,70])
+    upper_blue = np.array([110,255,255])
 
     while True:
         # grab the current frame
         (grabbed, frame) = camera.read()
+
+        if not grabbed:
+            print("No input image")
+            break
         
         frame = imutils.resize(frame, width=600)
         frameArea = frame.shape[0]*frame.shape[1]
@@ -27,7 +31,7 @@ def findTrafficSign():
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
         # define kernel for smoothing   
-        kernel = np.ones((5,5),np.uint8)
+        kernel = np.ones((3,3),np.uint8)
         # extract binary image with active blue regions
         mask = cv2.inRange(hsv, lower_blue, upper_blue)
         # morphological operations
