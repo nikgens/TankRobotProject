@@ -76,11 +76,11 @@ def findTrafficSign():
             warped = four_point_transform(mask, [largestRect][0])
             
             # show an image if rectangle was found
-            cv2.imshow("Warped", cv2.bitwise_not(warped))
+            #cv2.imshow("Warped", cv2.bitwise_not(warped))
 			
 			# use function to detect the sign on the found rectangle
             detectedTrafficSign = identifyTrafficSign(warped)
-            print(detectedTrafficSign)
+            #print(detectedTrafficSign)
 
         if largestRect is not None:
             # write the description of the sign on the original image
@@ -121,10 +121,10 @@ def identifyTrafficSign(image):
     subWidth = int(subWidth)
 
     # mark the ROIs borders on the image
-    #cv2.rectangle(image, (subWidth, 4*subHeight), (3*subWidth, 9*subHeight), (0,255,0),2) # left block
-    #cv2.rectangle(image, (4*subWidth, 4*subHeight), (6*subWidth, 9*subHeight), (0,255,0),2) # center block
-    #cv2.rectangle(image, (7*subWidth, 4*subHeight), (9*subWidth, 9*subHeight), (0,255,0),2) # right block
-    #cv2.rectangle(image, (3*subWidth, 2*subHeight), (7*subWidth, 4*subHeight), (0,255,0),2) # top block
+    cv2.rectangle(image, (subWidth, 4*subHeight), (3*subWidth, 9*subHeight), (0,255,0),2) # left block
+    cv2.rectangle(image, (4*subWidth, 4*subHeight), (6*subWidth, 9*subHeight), (0,255,0),2) # center block
+    cv2.rectangle(image, (7*subWidth, 4*subHeight), (9*subWidth, 9*subHeight), (0,255,0),2) # right block
+    cv2.rectangle(image, (3*subWidth, 2*subHeight), (7*subWidth, 4*subHeight), (0,255,0),2) # top block
 
     # substract 4 ROI of the sign thresh image
     leftBlock = image[4*subHeight:9*subHeight, subWidth:3*subWidth]
@@ -140,6 +140,8 @@ def identifyTrafficSign(image):
 
     segments = (leftFraction, centerFraction, rightFraction, topFraction)
     segments = tuple(1 if segment > THRESHOLD else 0 for segment in segments)
+
+    cv2.imshow("Warped", image)
 
     if segments in SIGNS_LOOKUP:
         return SIGNS_LOOKUP[segments]
