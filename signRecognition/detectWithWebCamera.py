@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import time
 from imutils.perspective import four_point_transform
-from imutils import contours
-import imutils
+#from imutils import contours
+#import imutils
 
 camera = cv2.VideoCapture(0)
 
@@ -24,7 +24,7 @@ def findTrafficSign():
             print("No input image")
             break
         
-        frame = imutils.resize(frame, width=600)
+        frame = imutils.resize(frame, width=500)
         frameArea = frame.shape[0]*frame.shape[1]
         
         # convert color image to HSV color scheme
