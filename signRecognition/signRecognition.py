@@ -13,8 +13,7 @@ SIGNS_LOOKUP = {
         (1, 0, 1, 1): 'turnBack', # turnBack
 }
 
-# load the example image
-image = cv2.imread("turnLeft.png")
+camera = cv2.VideoCapture(0)
 
 def defineTrafficSign(image):
 
@@ -72,6 +71,8 @@ def defineTrafficSign(image):
         #subHeight = thresh.shape[0]/10
         #subWidth = thresh.shape[1]/10
         (subHeight, subWidth) = np.divide(thresh.shape, 10)
+        subHeight = int(subHeight)
+        subWidth = int(subWidth)
 
         # mark the ROIs borders on the image
         cv2.rectangle(output, (subWidth, 4*subHeight), (3*subWidth, 9*subHeight), (0,255,0),2) # left block
@@ -94,6 +95,22 @@ def defineTrafficSign(image):
         segments = (leftFraction, centerFraction, rightFraction, topFraction)
         segments = tuple(1 if segment > 230 else 0 for segment in segments)
 
-        return SIGNS_LOOKUP[segments]
+        
 
-print(defineTrafficSign(image))
+        if segments in SIGNS_LOOKUP:
+            # show original image
+            cv2.imshow("output", output)
+            return SIGNS_LOOKUP[segments]
+        else:
+            return None
+
+
+        
+while True:
+        (grabbed, frame) = camera.read()
+        defineTrafficSign(frame)
+        # if the `q` key was pressed, break from the loop
+        if cv2.waitKey(1) & 0xFF is ord('q'):
+            cv2.destroyAllWindows()
+            print("Stop programm and close all windows")
+            break
