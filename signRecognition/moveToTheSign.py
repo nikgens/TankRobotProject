@@ -12,21 +12,25 @@ currentPan = 90
 currentTilt = 60
 
 # default values for PID
-maxMotorPWM = 255
+maxMotorSpeed = 200
 e_prev = 0
 e_int = 0
-Kp = 1.8
-Kd = 0.00001
-Ki = 0.001
+Kp = 0.4
+Kd = 0
+Ki = 0
 
 # initialize the camera and grab a reference to the raw camera capture
-cameraResolution = (320, 240)
+cameraResolution = (640, 480)
 camera = PiCamera()
 camera.resolution = cameraResolution
 camera.framerate = 32
 camera.brightness = 60
 camera.rotation = 180
 rawCapture = PiRGBArray(camera, size=cameraResolution)
+
+# record video from the camera
+fourcc = cv2.VideoWriter_fourcc(*'XVID')
+out = cv2.VideoWriter('output.avi',fourcc, 10.0, (640,480))
 
 # parameters of center of the frame
 halfFrameWidth = cameraResolution[0]/2
@@ -60,14 +64,19 @@ def movePanTilt(servo, angle):
 
 
 def moveMotors(left, right):
-    '''Moves the motors with specific speed'''
+    '''Moves the motors with specific speed.
+       We can send to serial only values between 0 and 255.
+       To move motors in different directions we define 0-126 for back motion
+       and 128-255 for stright motion.
+       On Arduino we will map values like this leftPWM = map(leftPWM, 0, 255, -255, 255);
+       127 will be for stop the motors
+    '''
 
-    if (0 < left <= 255) or (0 < right <= 255):
-        serialArduino.write(struct.pack('>B', 254)) # code 254 for moveStright() function on Arduino
+    if (0 <= left <= 255) or (0 <= right <= 255):
+        serialArduino.write(struct.pack('>B', 254)) # code 254 for move() function on Arduino
         serialArduino.write(struct.pack('>B', left))
         serialArduino.write(struct.pack('>B', right))
-    elif left == 0 and right == 0:
-        serialArduino.write(struct.pack('>B', 253)) # code 253 for stop() function on Arduino
+
     else:
         print ("Speed must be an integer between 0 and 255.\n")
 
@@ -241,15 +250,15 @@ def followTheLine():
             
             pid = pidController(center[0], halfFrameWidth)
 
-            if pid > maxMotorPWM:
-                pid = maxMotorPWM
-            elif pid < -maxMotorPWM:
-                pid = -maxMotorPWM
+            if pid > maxMotorSpeed:
+                pid = maxMotorSpeed
+            elif pid < -maxMotorSpeed:
+                pid = -maxMotorSpeed
 
             if pid < 0:
-                moveMotors(maxMotorPWM + pid, maxMotorPWM)
+                moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
             else:
-                moveMotors(maxMotorPWM, maxMotorPWM - pid)
+                moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
             
         else:
             moveMotors(0,0)
@@ -280,7 +289,14 @@ def pidController(xCentroidCoordinate, xCenterOfTheImage):
     pid = Kp * error + Ki * e_int + Kd * e_diff
     #print('pid (%d)= Kp * error(%d)+ Ki * e_int(%d)+ Kd * e_diff(%d)' % (pid, error, e_int, e_diff))
     e_prev = error
-    return pid
+    if abs(pid) < 128:
+        return pid
+    else:
+        if pid > 128:
+            return 128
+        elif pid < -128:
+            return -128
+    
 
 
 def findTrafficSign():
@@ -290,7 +306,7 @@ def findTrafficSign():
     '''
 	
     # define range HSV for blue color of the traffic sign
-    lower_blue = np.array([90,80,50])
+    lower_blue = np.array([80,80,40])
     upper_blue = np.array([110,255,255])
 
     while True:
@@ -351,27 +367,29 @@ def findTrafficSign():
                     largestArea = area
                     largestRect = box
                     largestContour = cnt
-            
-        if largestArea > frameArea*0.02:
+
+        #print("Largest Area: %d, Frame Area: %d" % (largestArea, frameArea))    
+        if largestArea > frameArea*0.001:
+                   
             # find moment for the rectangle
             M = cv2.moments(largestContour)
             # find center of the rectangle
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-
+            
             # count error with PID to move to the sign direction
             pid = pidController(center[0], halfFrameWidth)
             # serialArduino.write(struct.pack('>B', 253)) from moveMotors() can only
-            # to transfer values from 0 to 255, so if the value of error greater then 255
+            # transfer values from 0 to 255, so if the value of error greater then 255
             # we assign max value 255 and if less then 0, then we assign min value 0
-            if pid > maxMotorPWM:
-                pid = maxMotorPWM
-            elif pid < -maxMotorPWM:
-                pid = -maxMotorPWM
+            if pid > maxMotorSpeed:
+                pid = maxMotorSpeed
+            elif pid < -maxMotorSpeed:
+                pid = -maxMotorSpeed
             # if error with "-", then we need to slow down left motor, else - right
             if pid < 0:
-                moveMotors(maxMotorPWM + pid, maxMotorPWM)
+                moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
             else:
-                moveMotors(maxMotorPWM, maxMotorPWM - pid)
+                moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
             
             # draw contour of the found rectangle on  the original image   
             cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
@@ -380,21 +398,26 @@ def findTrafficSign():
             warped = four_point_transform(mask, [largestRect][0])
             
             # show an image if rectangle was found
-            #cv2.imshow("Warped", cv2.bitwise_not(warped))
+            cv2.imshow("Warped", cv2.bitwise_not(warped))
 			
 	    # use function to detect the sign on the found rectangle
             detectedTrafficSign = identifyTrafficSign(warped)
             #print(detectedTrafficSign)
 
 	    # write the description of the sign on the original image
-            cv2.putText(frame, detectedTrafficSign, (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            cv2.putText(frame, detectedTrafficSign, tuple(largestRect[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        
+        elif largestArea > frameArea*0.35:
+            moveMotors(127,127) #127 is mapped to 0 on Arduino
 
         # if there is no blue rectangular on the frame, then stop
         else:
-            moveMotors(0,0)
+            moveMotors(127,127) #127 is mapped to 0 on Arduino
             
         # show original image
         cv2.imshow("Original", frame)
+
+        out.write(frame)
         
         # clear the stream in preparation for the next frame
         rawCapture.truncate(0)
@@ -402,6 +425,7 @@ def findTrafficSign():
         # if the `q` key was pressed, break from the loop
         if cv2.waitKey(1) & 0xFF is ord('q'):
             cv2.destroyAllWindows()
+            out.release()
             print("Stop programm and close all windows")
             break
 
