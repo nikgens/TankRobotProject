@@ -12,32 +12,33 @@ currentPan = 90
 currentTilt = 60
 
 # default values for PID
-maxMotorSpeed = 200
+maxMotorSpeed = 220 # from 127 to 255
 e_prev = 0
 e_int = 0
 Kp = 0.4
-Kd = 0
-Ki = 0
+Kd = 0.002
+Ki = 0.00001
 
 # initialize the camera and grab a reference to the raw camera capture
 cameraResolution = (640, 480)
 camera = PiCamera()
 camera.resolution = cameraResolution
-camera.framerate = 32
+camera.framerate = 60
 camera.brightness = 60
 camera.rotation = 180
 rawCapture = PiRGBArray(camera, size=cameraResolution)
+# allow the camera to warmup
+time.sleep(2)
 
 # record video from the camera
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('output.avi',fourcc, 10.0, (640,480))
+out = cv2.VideoWriter('output.avi',fourcc, 6.0, (640,480))
 
 # parameters of center of the frame
 halfFrameWidth = cameraResolution[0]/2
 halfFrameHeight = cameraResolution[1]/2
  
-# allow the camera to warmup
-time.sleep(2)
+
 
 #define serial port
 usbport = '/dev/ttyUSB0'
@@ -59,6 +60,10 @@ def movePanTilt(servo, angle):
         serialArduino.write(struct.pack('>B', 255)) # code 255 for servo angles
         serialArduino.write(struct.pack('>B', servo))
         serialArduino.write(struct.pack('>B', angle))
+        if servo == 1:
+            print("Pan angle is: ", angle)
+        else:
+            print("Tilt angle is: ", angle)
     else:
         print ("Servo angle must be an integer between 0 and 180.\n")
 
@@ -95,8 +100,8 @@ def calculateAnglesToMove(coordinates):
     
     # calculate angle that must be add/subtract to/from current servos position to reach
     # the center of the frame with centroid. 6 pix is the approximate value for 1 degree servo movement for (320, 240) frame
-    changePanSeroAngleBy = differenceInX/6
-    changeTiltSeroAngleBy = differenceInY/6
+    changePanSeroAngleBy = differenceInX/12
+    changeTiltSeroAngleBy = differenceInY/12
 
     if changePanSeroAngleBy > 0:
         currentPan += abs(changePanSeroAngleBy)
@@ -132,8 +137,8 @@ def followTheColoreObject():
     # define the lower and upper boundaries of the "orange"
     # ball in the HSV color space, then initialize the
     # list of tracked points
-    lower_yellow = np.array([0,100,100])
-    upper_yellow = np.array([10,255,255])
+    lower_yellow = np.array([55,100,0])
+    upper_yellow = np.array([75,255,255])
     
     while True:
         start = time.time()
@@ -150,8 +155,8 @@ def followTheColoreObject():
         # Draw the center of the image
         cv2.line(frame,(halfFrameWidth - 20,halfFrameHeight),(halfFrameWidth + 20,halfFrameHeight),(0,255,0),2)
         cv2.line(frame,(halfFrameWidth,halfFrameHeight - 20),(halfFrameWidth,halfFrameHeight + 20),(0,255,0),2)
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        frame_to_thresh = frame.copy()
+        hsv = cv2.cvtColor(frame_to_thresh, cv2.COLOR_BGR2HSV)
             
         kernel = np.ones((5,5),np.uint8)
         mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
@@ -188,6 +193,8 @@ def followTheColoreObject():
         cv2.imshow("Original", frame)
         cv2.imshow("Mask", mask)
 
+        out.write(frame)
+
         # clear the stream in preparation for the next frame
         rawCapture.truncate(0)
 
@@ -195,6 +202,7 @@ def followTheColoreObject():
         # if the `q` key was pressed, break from the loop
         if cv2.waitKey(1) & 0xFF is ord('q'):
             cv2.destroyAllWindows()
+            out.release()
             print("Stop programm and close all windows")
             break
         stop = time.time()
@@ -248,7 +256,7 @@ def followTheLine():
             # draw the center of the tracking object
             cv2.circle(frame, center, 5, (0, 0, 255), -1)
             
-            pid = pidController(center[0], halfFrameWidth)
+            pid = pidController(center[0], halfFrameWidth, 0.4, 0, 0) 
 
             if pid > maxMotorSpeed:
                 pid = maxMotorSpeed
@@ -279,7 +287,7 @@ def followTheLine():
             break
 
 
-def pidController(xCentroidCoordinate, xCenterOfTheImage):
+def pidController(xCentroidCoordinate, xCenterOfTheImage, Kp, Kd, Ki):
 
     global e_prev
     global e_int
@@ -304,10 +312,15 @@ def findTrafficSign():
     This function find blobs with blue color on the image.
     After blobs were found it detects the largest square blob, that must be the sign.
     '''
+    # move servos. send command to the arduino
+    movePanTilt(1,95)
+    movePanTilt(2,75)
+    time.sleep(0.2)
+    
 	
     # define range HSV for blue color of the traffic sign
-    lower_blue = np.array([80,80,40])
-    upper_blue = np.array([110,255,255])
+    lower_blue = np.array([80,100,100])
+    upper_blue = np.array([130,255,255])
 
     while True:
         # The use_video_port parameter controls whether the camera's image or video port is used 
@@ -318,11 +331,12 @@ def findTrafficSign():
 
         # At this point the image is available as stream.array
         frame = rawCapture.array
+        frame_to_thresh = frame.copy()
 
         frameArea = frame.shape[0]*frame.shape[1]
         
         # convert color image to HSV color scheme
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(frame_to_thresh, cv2.COLOR_BGR2HSV)
         
         # define kernel for smoothing   
         kernel = np.ones((3,3),np.uint8)
@@ -375,21 +389,26 @@ def findTrafficSign():
             M = cv2.moments(largestContour)
             # find center of the rectangle
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-            
-            # count error with PID to move to the sign direction
-            pid = pidController(center[0], halfFrameWidth)
-            # serialArduino.write(struct.pack('>B', 253)) from moveMotors() can only
-            # transfer values from 0 to 255, so if the value of error greater then 255
-            # we assign max value 255 and if less then 0, then we assign min value 0
-            if pid > maxMotorSpeed:
-                pid = maxMotorSpeed
-            elif pid < -maxMotorSpeed:
-                pid = -maxMotorSpeed
-            # if error with "-", then we need to slow down left motor, else - right
-            if pid < 0:
-                moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
+
+            if largestArea > frameArea*0.30:
+                moveMotors(127,127) #127 is mapped to 0 on Arduino
+                print("Big sign to close")
+
             else:
-                moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
+                # count error with PID to move to the sign direction
+                pid = pidController(center[0], halfFrameWidth, 0.4, 0, 0)
+                # serialArduino.write(struct.pack('>B', 253)) from moveMotors() can only
+                # transfer values from 0 to 255, so if the value of error greater then 255
+                # we assign max value 255 and if less then 0, then we assign min value 0
+                if pid > maxMotorSpeed:
+                    pid = maxMotorSpeed
+                elif pid < -maxMotorSpeed:
+                    pid = -maxMotorSpeed
+                # if error with "-", then we need to slow down left motor, else - right
+                if pid < 0:
+                    moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
+                else:
+                    moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
             
             # draw contour of the found rectangle on  the original image   
             cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
@@ -407,15 +426,14 @@ def findTrafficSign():
 	    # write the description of the sign on the original image
             cv2.putText(frame, detectedTrafficSign, tuple(largestRect[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         
-        elif largestArea > frameArea*0.35:
-            moveMotors(127,127) #127 is mapped to 0 on Arduino
-
         # if there is no blue rectangular on the frame, then stop
         else:
             moveMotors(127,127) #127 is mapped to 0 on Arduino
+            print("No sign")
             
         # show original image
         cv2.imshow("Original", frame)
+        cv2.imshow("Mask", mask)
 
         out.write(frame)
         
@@ -424,6 +442,7 @@ def findTrafficSign():
 
         # if the `q` key was pressed, break from the loop
         if cv2.waitKey(1) & 0xFF is ord('q'):
+            moveMotors(127,127)
             cv2.destroyAllWindows()
             out.release()
             print("Stop programm and close all windows")
@@ -484,8 +503,54 @@ def identifyTrafficSign(image):
         return None
 
 
+def callback(value):
+    pass
+
+def findHSVRange():
+
+    cv2.namedWindow("Trackbars", 0)
+    for i in ["MIN", "MAX"]:
+        v = 0 if i == "MIN" else 255
+        for j in 'HSV':
+            cv2.createTrackbar("%s_%s" % (j, i), "Trackbars", v, 255, callback)
+
+    while True:
+
+        camera.capture(rawCapture, use_video_port=True, format='bgr')
+
+        image = rawCapture.array
+
+        frame_to_thresh = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+        values = []
+        for i in ["MIN", "MAX"]:
+            for j in 'HSV':
+                v = cv2.getTrackbarPos("%s_%s" % (j, i), "Trackbars")
+                values.append(v)
+        v1_min, v2_min, v3_min, v1_max, v2_max, v3_max =  values
+
+        thresh = cv2.inRange(frame_to_thresh, (v1_min, v2_min, v3_min), (v1_max, v2_max, v3_max))
+        
+        kernel = np.ones((3,3),np.uint8)
+        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
+        final = closing
+
+        cv2.imshow("Original", image)
+        cv2.imshow("Final", final)
+
+        rawCapture.truncate(0)
+	
+        if cv2.waitKey(1) & 0xFF is ord('q'):
+            cv2.destroyAllWindows()
+            print("Stop programm and close all windows")
+            break
+
+
 def main():
     findTrafficSign()
+    #followTheColoreObject()
+    #findHSVRange()
 
 
 if __name__ == '__main__':
