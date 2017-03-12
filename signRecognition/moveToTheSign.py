@@ -1,30 +1,34 @@
+from __future__ import division
 import cv2
 import numpy as np
+import argparse
+from operator import xor
 from picamera.array import PiRGBArray
 from picamera import PiCamera
 import time
 from imutils.perspective import four_point_transform
-# send data to Serial port
+# libraries to send data to Serial port
 import serial
 import struct
 
-currentPan = 90
-currentTilt = 60
+# default values for servos
+currentPan = 95
+currentTilt = 45
 
 # default values for PID
-maxMotorSpeed = 220 # from 127 to 255
+MAX_MOTOR_SPEED = 230 # from 127 to 255
 e_prev = 0
 e_int = 0
-Kp = 0.4
-Kd = 0.002
-Ki = 0.00001
+
+# start values for HSV range, that can be choose with findHSVRange() on startup
+v1_min, v2_min, v3_min, v1_max, v2_max, v3_max = (0,0,0,180,255,255)
 
 # initialize the camera and grab a reference to the raw camera capture
 cameraResolution = (640, 480)
 camera = PiCamera()
 camera.resolution = cameraResolution
-camera.framerate = 60
-camera.brightness = 60
+camera.framerate = 90
+#camera.brightness = 60
 camera.rotation = 180
 rawCapture = PiRGBArray(camera, size=cameraResolution)
 # allow the camera to warmup
@@ -34,15 +38,117 @@ time.sleep(2)
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
 out = cv2.VideoWriter('output.avi',fourcc, 6.0, (640,480))
 
-# parameters of center of the frame
+# parameters of the center of the frame
 halfFrameWidth = cameraResolution[0]/2
 halfFrameHeight = cameraResolution[1]/2
- 
-
 
 #define serial port
 usbport = '/dev/ttyUSB0'
 serialArduino = serial.Serial(usbport, 9600, timeout=1)
+
+###########################
+# Block of help functions #
+###########################
+
+def get_arguments():
+    '''
+    Help function to hold script arguments
+    '''
+    ap = argparse.ArgumentParser()
+    ap.add_argument('-p', '--programm', required=True,
+                    help='Specify programm to start: "-p line" - line following, "-p sign" - move with signs, "-p track" - color object tracking')
+    ap.add_argument('-c', '--color', required=False,
+                    help='Start HSV trackbar to choose color',
+                    action='store_true')
+    args = vars(ap.parse_args())
+    return args
+
+
+def mapValueToRange(value, fromMin, fromMax, toMin, toMax):
+    '''
+    Mapping function from one range to another
+        >>> translate(127, 0, 255, -255, 255) translate from 0 - 255 to -255 - 255
+            -1
+    '''
+    # Figure out how 'wide' each range is
+    fromSpan = fromMax - fromMin
+    toSpan = toMax - toMin
+    
+    # Convert the left range into a 0-1 range (float)
+    valueScaled = (value - fromMin) / fromSpan
+    
+    # Convert the 0-1 range into a value in the right range.
+    return int(toMin + (valueScaled * toSpan))
+
+
+def findHSVRange():
+    '''
+    This is a help function to find HSV color ranges, that will be used in other functions of our robot
+    It will cteate trackbars to find optimal range values from the captured images
+    '''
+    global v1_min, v2_min, v3_min, v1_max, v2_max, v3_max 
+
+    # he function namedWindow creates a window that can be used as a placeholder for images and trackbars.
+    # Created windows are referred to by their names.
+    cv2.namedWindow("Trackbars", 0)
+    for i in ["MIN", "MAX"]:
+        v = 0 if i == "MIN" else 255
+        for j in 'HSV':
+            if j == 'H':
+                # create trackbar for Hue from 0 tj 180 degrees
+                # For HSV, Hue range is [0,179], Saturation range is [0,255] and Value range is [0,255]. 
+                cv2.createTrackbar("%s_%s" % (j, i), "Trackbars", v, 179, (lambda x: None))
+            else:
+                cv2.createTrackbar("%s_%s" % (j, i), "Trackbars", v, 255, (lambda x: None))
+
+    while True:
+
+        camera.capture(rawCapture, use_video_port=True, format='bgr')
+        frame = rawCapture.array
+        frame_to_thresh = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        values = []
+        for i in ["MIN", "MAX"]:
+            for j in 'HSV':
+                v = cv2.getTrackbarPos("%s_%s" % (j, i), "Trackbars")
+                values.append(v)
+
+        v1_min, v2_min, v3_min, v1_max, v2_max, v3_max =  values
+
+        thresh = cv2.inRange(frame_to_thresh, np.array([v1_min, v2_min, v3_min]), np.array([v1_max, v2_max, v3_max]))
+        kernel = np.ones((3,3),np.uint8)
+        mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        cv2.imshow("Original", frame)
+        cv2.imshow("Mask", mask)
+
+        rawCapture.truncate(0)
+	
+        if cv2.waitKey(1) & 0xFF is ord('q'):
+            cv2.destroyAllWindows()
+            print("Stop programm and close all windows")
+            break
+
+
+def pidController(xCentroidCoordinate, xCenterOfTheImage, Kp, Kd, Ki):
+
+    global e_prev
+    global e_int
+    error = xCentroidCoordinate - xCenterOfTheImage
+    e_int = e_int + error
+    e_diff = error - e_prev
+    pid = Kp * error + Ki * e_int + Kd * e_diff
+    #print('pid (%d)= (Kp(%d) * error(%d))%d + (Ki(%d) * e_int(%d))%d + (Kd(%d) * e_diff(%d))%d' % (pid, Kp, error, Kp*error, Ki, e_int, Ki*e_int, Kd, e_diff, Kd*e_diff ))
+    e_prev = error
+    if abs(pid) < MAX_MOTOR_SPEED:
+        return pid
+    else:
+        if pid > MAX_MOTOR_SPEED:
+            return MAX_MOTOR_SPEED
+        elif pid < -MAX_MOTOR_SPEED:
+            return -MAX_MOTOR_SPEED
+    
 
 def movePanTilt(servo, angle):
     '''Moves the specified servo to the supplied angle.
@@ -132,16 +238,78 @@ def calculateAnglesToMove(coordinates):
     return panAngle, tiltAngle
 
 
+def identifyTrafficSign(image):
+    '''
+    In this function we select some ROI in which we expect to have the sign parts. If the ROI has more active pixels than threshold we mark it as 1, else 0
+    After path through all four regions, we compare the tuple of ones and zeros with keys in dictionary SIGNS_LOOKUP
+    It's the help function for findTrafficSign()
+    '''
+
+    # define the dictionary of signs segments so we can identify
+    # each signs on the image
+    SIGNS_LOOKUP = {
+        (1, 0, 0, 1): 'Turn Right', # turnRight
+        (0, 0, 1, 1): 'Turn Left', # turnLeft
+        (0, 1, 0, 1): 'Move Straight', # moveStraight
+        (1, 0, 1, 1): 'Turn Back', # turnBack
+    }
+
+    THRESHOLD = 150
+    
+    image = cv2.bitwise_not(image)
+    # (roiH, roiW) = roi.shape
+    #subHeight = thresh.shape[0]/10
+    #subWidth = thresh.shape[1]/10
+    (subHeight, subWidth) = np.divide(image.shape, 10)
+    subHeight = int(subHeight)
+    subWidth = int(subWidth)
+
+    # mark the ROIs borders on the image
+    #cv2.rectangle(image, (subWidth, 4*subHeight), (3*subWidth, 9*subHeight), (0,255,0),2) # left block
+    #cv2.rectangle(image, (4*subWidth, 4*subHeight), (6*subWidth, 9*subHeight), (0,255,0),2) # center block
+    #cv2.rectangle(image, (7*subWidth, 4*subHeight), (9*subWidth, 9*subHeight), (0,255,0),2) # right block
+    #cv2.rectangle(image, (3*subWidth, 2*subHeight), (7*subWidth, 4*subHeight), (0,255,0),2) # top block
+
+    # substract 4 ROI of the sign thresh image
+    leftBlock = image[4*subHeight:9*subHeight, subWidth:3*subWidth]
+    centerBlock = image[4*subHeight:9*subHeight, 4*subWidth:6*subWidth]
+    rightBlock = image[4*subHeight:9*subHeight, 7*subWidth:9*subWidth]
+    topBlock = image[2*subHeight:4*subHeight, 3*subWidth:7*subWidth]
+
+    # we now track the fraction of each ROI
+    leftFraction = np.sum(leftBlock)/(leftBlock.shape[0]*leftBlock.shape[1])
+    centerFraction = np.sum(centerBlock)/(centerBlock.shape[0]*centerBlock.shape[1])
+    rightFraction = np.sum(rightBlock)/(rightBlock.shape[0]*rightBlock.shape[1])
+    topFraction = np.sum(topBlock)/(topBlock.shape[0]*topBlock.shape[1])
+
+    segments = (leftFraction, centerFraction, rightFraction, topFraction)
+    segments = tuple(1 if segment > THRESHOLD else 0 for segment in segments)
+
+    cv2.imshow("Warped", image)
+
+    if segments in SIGNS_LOOKUP:
+        return SIGNS_LOOKUP[segments]
+    else:
+        return None
+
+###########################
+# End of help functions   #
+###########################
+
 def followTheColoreObject():
 
-    # define the lower and upper boundaries of the "orange"
-    # ball in the HSV color space, then initialize the
-    # list of tracked points
-    lower_yellow = np.array([55,100,0])
-    upper_yellow = np.array([75,255,255])
+    if args['color']:
+        lower = np.array([v1_min, v2_min, v3_min])
+        upper = np.array([v1_max, v2_max, v3_max])
+    else:
+        # define the lower and upper boundaries of the "orange"
+        # ball in the HSV color space, then initialize the
+        # list of tracked points
+        lower = np.array([55,100,0])
+        upper = np.array([75,255,255])
     
     while True:
-        start = time.time()
+        #start = time.time()
 
         # The use_video_port parameter controls whether the camera's image or video port is used 
         # to capture images. It defaults to False which means that the camera's image port is used. 
@@ -155,11 +323,11 @@ def followTheColoreObject():
         # Draw the center of the image
         cv2.line(frame,(halfFrameWidth - 20,halfFrameHeight),(halfFrameWidth + 20,halfFrameHeight),(0,255,0),2)
         cv2.line(frame,(halfFrameWidth,halfFrameHeight - 20),(halfFrameWidth,halfFrameHeight + 20),(0,255,0),2)
+
         frame_to_thresh = frame.copy()
         hsv = cv2.cvtColor(frame_to_thresh, cv2.COLOR_BGR2HSV)
-            
         kernel = np.ones((5,5),np.uint8)
-        mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        mask = cv2.inRange(hsv, lower, upper)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
@@ -203,23 +371,31 @@ def followTheColoreObject():
         if cv2.waitKey(1) & 0xFF is ord('q'):
             cv2.destroyAllWindows()
             out.release()
+            moveMotors(127,127)
+            movePanTilt(1,currentPan)
+            movePanTilt(2,currentTilt)
             print("Stop programm and close all windows")
             break
-        stop = time.time()
-        print(stop-start)
+        #stop = time.time()
+        #print(stop-start)
 
 
 def followTheLine():
-
-    # define the lower and upper boundaries of the
-    # red line in the HSV color space, then initialize the
-    # list of tracked points
-    lower_line = np.array([0,100,100])
-    upper_line = np.array([10,255,255])
+    if args['color']:
+        lower = np.array([v1_min, v2_min, v3_min])
+        upper = np.array([v1_max, v2_max, v3_max])
+    else:
+        # define the lower and upper boundaries of the
+        # red line in the HSV color space, then initialize the
+        # list of tracked points
+        lower1 = np.array([0,100,80])
+        upper1 = np.array([10,255,255])
+        lower2 = np.array([170,100,80])
+        upper2 = np.array([180,255,255])
 
     # move servos. send command to the arduino
-    movePanTilt(1,90)
-    movePanTilt(2,25)
+    movePanTilt(1,currentPan)
+    movePanTilt(2,0) #0 is the lowest
     time.sleep(0.2)
 
     while True:
@@ -231,14 +407,20 @@ def followTheLine():
 
         # At this point the image is available as stream.array
         frame = rawCapture.array
-       
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        frame_to_thresh = frame.copy()
+        hsv = cv2.cvtColor(frame_to_thresh, cv2.COLOR_BGR2HSV)
             
         kernel = np.ones((5,5),np.uint8)
-        mask = cv2.inRange(hsv, lower_line, upper_line)
+        # for red color we need to masks.
+        mask1 = cv2.inRange(hsv, lower1, upper1)
+        mask2 = cv2.inRange(hsv, lower2, upper2)
+        mask = mask1 + mask2
+        
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask[0:120, 0:320] = 0
+        mask[0:90, 0:640] = 0
+        mask[320:, 0:640] = 0
 
         # find contours in the mask and initialize the current
         # (x, y) center of the ball
@@ -256,55 +438,34 @@ def followTheLine():
             # draw the center of the tracking object
             cv2.circle(frame, center, 5, (0, 0, 255), -1)
             
-            pid = pidController(center[0], halfFrameWidth, 0.4, 0, 0) 
-
-            if pid > maxMotorSpeed:
-                pid = maxMotorSpeed
-            elif pid < -maxMotorSpeed:
-                pid = -maxMotorSpeed
-
+            pid = pidController(center[0], halfFrameWidth, 0.5, 0.19, 0.04) #0.5, 0.192, 0.03
+            
             if pid < 0:
-                moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
+                moveMotors(MAX_MOTOR_SPEED + pid, MAX_MOTOR_SPEED + pid*0.1)
             else:
-                moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
+                moveMotors(MAX_MOTOR_SPEED - pid*0.1, MAX_MOTOR_SPEED - pid)
             
         else:
-            moveMotors(0,0)
+            moveMotors(127,127)
             
         # show images
         cv2.imshow("Original", frame)
         cv2.imshow("Mask", mask)
 
+        out.write(frame)
+
         # clear the stream in preparation for the next frame
         rawCapture.truncate(0)
-
 
         # if the `q` key was pressed, break from the loop
         if cv2.waitKey(1) & 0xFF is ord('q'):
             cv2.destroyAllWindows()
-            moveMotors(0,0)
+            out.release()
+            moveMotors(127,127)
+            movePanTilt(1,currentPan)
+            movePanTilt(2,currentTilt)
             print("Stop programm and close all windows")
             break
-
-
-def pidController(xCentroidCoordinate, xCenterOfTheImage, Kp, Kd, Ki):
-
-    global e_prev
-    global e_int
-    error = xCentroidCoordinate - xCenterOfTheImage
-    e_int = e_int + error
-    e_diff = error - e_prev
-    pid = Kp * error + Ki * e_int + Kd * e_diff
-    #print('pid (%d)= Kp * error(%d)+ Ki * e_int(%d)+ Kd * e_diff(%d)' % (pid, error, e_int, e_diff))
-    e_prev = error
-    if abs(pid) < 128:
-        return pid
-    else:
-        if pid > 128:
-            return 128
-        elif pid < -128:
-            return -128
-    
 
 
 def findTrafficSign():
@@ -313,14 +474,17 @@ def findTrafficSign():
     After blobs were found it detects the largest square blob, that must be the sign.
     '''
     # move servos. send command to the arduino
-    movePanTilt(1,95)
-    movePanTilt(2,75)
+    movePanTilt(1,currentPan)
+    movePanTilt(2,currentTilt)
     time.sleep(0.2)
     
-	
-    # define range HSV for blue color of the traffic sign
-    lower_blue = np.array([80,100,100])
-    upper_blue = np.array([130,255,255])
+    if args['color']:
+        lower = np.array([v1_min, v2_min, v3_min])
+        upper = np.array([v1_max, v2_max, v3_max])
+    else:
+        # define range HSV for blue color of the traffic sign
+        lower = np.array([80,100,100])
+        upper = np.array([130,255,255])
 
     while True:
         # The use_video_port parameter controls whether the camera's image or video port is used 
@@ -341,7 +505,7 @@ def findTrafficSign():
         # define kernel for smoothing   
         kernel = np.ones((3,3),np.uint8)
         # extract binary image with active blue regions
-        mask = cv2.inRange(hsv, lower_blue, upper_blue)
+        mask = cv2.inRange(hsv, lower, upper)
         # morphological operations
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -397,18 +561,12 @@ def findTrafficSign():
             else:
                 # count error with PID to move to the sign direction
                 pid = pidController(center[0], halfFrameWidth, 0.4, 0, 0)
-                # serialArduino.write(struct.pack('>B', 253)) from moveMotors() can only
-                # transfer values from 0 to 255, so if the value of error greater then 255
-                # we assign max value 255 and if less then 0, then we assign min value 0
-                if pid > maxMotorSpeed:
-                    pid = maxMotorSpeed
-                elif pid < -maxMotorSpeed:
-                    pid = -maxMotorSpeed
+ 
                 # if error with "-", then we need to slow down left motor, else - right
                 if pid < 0:
-                    moveMotors(maxMotorSpeed + pid, maxMotorSpeed)
+                    moveMotors(MAX_MOTOR_SPEED + pid, MAX_MOTOR_SPEED)
                 else:
-                    moveMotors(maxMotorSpeed, maxMotorSpeed - pid)
+                    moveMotors(MAX_MOTOR_SPEED, MAX_MOTOR_SPEED - pid)
             
             # draw contour of the found rectangle on  the original image   
             cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
@@ -442,116 +600,37 @@ def findTrafficSign():
 
         # if the `q` key was pressed, break from the loop
         if cv2.waitKey(1) & 0xFF is ord('q'):
-            moveMotors(127,127)
             cv2.destroyAllWindows()
             out.release()
-            print("Stop programm and close all windows")
-            break
-
-def identifyTrafficSign(image):
-    '''
-    In this function we select some ROI in which we expect to have the sign parts. If the ROI has more active pixels than threshold we mark it as 1, else 0
-    After path through all four regions, we compare the tuple of ones and zeros with keys in dictionary SIGNS_LOOKUP
-    It's the help function for findTrafficSign()
-    '''
-
-    # define the dictionary of signs segments so we can identify
-    # each signs on the image
-    SIGNS_LOOKUP = {
-        (1, 0, 0, 1): 'Turn Right', # turnRight
-        (0, 0, 1, 1): 'Turn Left', # turnLeft
-        (0, 1, 0, 1): 'Move Straight', # moveStraight
-        (1, 0, 1, 1): 'Turn Back', # turnBack
-    }
-
-    THRESHOLD = 150
-    
-    image = cv2.bitwise_not(image)
-    # (roiH, roiW) = roi.shape
-    #subHeight = thresh.shape[0]/10
-    #subWidth = thresh.shape[1]/10
-    (subHeight, subWidth) = np.divide(image.shape, 10)
-    subHeight = int(subHeight)
-    subWidth = int(subWidth)
-
-    # mark the ROIs borders on the image
-    #cv2.rectangle(image, (subWidth, 4*subHeight), (3*subWidth, 9*subHeight), (0,255,0),2) # left block
-    #cv2.rectangle(image, (4*subWidth, 4*subHeight), (6*subWidth, 9*subHeight), (0,255,0),2) # center block
-    #cv2.rectangle(image, (7*subWidth, 4*subHeight), (9*subWidth, 9*subHeight), (0,255,0),2) # right block
-    #cv2.rectangle(image, (3*subWidth, 2*subHeight), (7*subWidth, 4*subHeight), (0,255,0),2) # top block
-
-    # substract 4 ROI of the sign thresh image
-    leftBlock = image[4*subHeight:9*subHeight, subWidth:3*subWidth]
-    centerBlock = image[4*subHeight:9*subHeight, 4*subWidth:6*subWidth]
-    rightBlock = image[4*subHeight:9*subHeight, 7*subWidth:9*subWidth]
-    topBlock = image[2*subHeight:4*subHeight, 3*subWidth:7*subWidth]
-
-    # we now track the fraction of each ROI
-    leftFraction = np.sum(leftBlock)/(leftBlock.shape[0]*leftBlock.shape[1])
-    centerFraction = np.sum(centerBlock)/(centerBlock.shape[0]*centerBlock.shape[1])
-    rightFraction = np.sum(rightBlock)/(rightBlock.shape[0]*rightBlock.shape[1])
-    topFraction = np.sum(topBlock)/(topBlock.shape[0]*topBlock.shape[1])
-
-    segments = (leftFraction, centerFraction, rightFraction, topFraction)
-    segments = tuple(1 if segment > THRESHOLD else 0 for segment in segments)
-
-    cv2.imshow("Warped", image)
-
-    if segments in SIGNS_LOOKUP:
-        return SIGNS_LOOKUP[segments]
-    else:
-        return None
-
-
-def callback(value):
-    pass
-
-def findHSVRange():
-
-    cv2.namedWindow("Trackbars", 0)
-    for i in ["MIN", "MAX"]:
-        v = 0 if i == "MIN" else 255
-        for j in 'HSV':
-            cv2.createTrackbar("%s_%s" % (j, i), "Trackbars", v, 255, callback)
-
-    while True:
-
-        camera.capture(rawCapture, use_video_port=True, format='bgr')
-
-        image = rawCapture.array
-
-        frame_to_thresh = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-        values = []
-        for i in ["MIN", "MAX"]:
-            for j in 'HSV':
-                v = cv2.getTrackbarPos("%s_%s" % (j, i), "Trackbars")
-                values.append(v)
-        v1_min, v2_min, v3_min, v1_max, v2_max, v3_max =  values
-
-        thresh = cv2.inRange(frame_to_thresh, (v1_min, v2_min, v3_min), (v1_max, v2_max, v3_max))
-        
-        kernel = np.ones((3,3),np.uint8)
-        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
-        final = closing
-
-        cv2.imshow("Original", image)
-        cv2.imshow("Final", final)
-
-        rawCapture.truncate(0)
-	
-        if cv2.waitKey(1) & 0xFF is ord('q'):
-            cv2.destroyAllWindows()
+            moveMotors(127,127)
+            movePanTilt(1,currentPan)
+            movePanTilt(2,currentTilt)
             print("Stop programm and close all windows")
             break
 
 
 def main():
-    findTrafficSign()
-    #followTheColoreObject()
-    #findHSVRange()
-
-
+    #
+    if args['programm'] == 'sign':
+        if args['color']:
+            findHSVRange()
+        findTrafficSign()
+    elif args['programm'] == 'track':
+        if args['color']:
+            findHSVRange()
+        followTheColoreObject()
+    elif args['programm'] == 'line':
+        if args['color']:
+            movePanTilt(1,currentPan)
+            movePanTilt(2,0)
+            time.sleep(0.2)
+            findHSVRange()
+        followTheLine()
+        
+        
 if __name__ == '__main__':
+    # to store args as global variable. If to set this line of code in main() we will not have the opportunity
+    # to use args values in other functions
+    args = get_arguments()
+    # start the main function
     main()

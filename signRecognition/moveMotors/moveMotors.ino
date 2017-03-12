@@ -26,8 +26,8 @@ int maxPulse = 2400;  // maximum servo position, us
 int startbyte;       // start byte, begin reading input
 int servo;           // which servo to pulse?
 int pos;             // servo angle 0-180
-int currentPanPosition = 90;
-int currentTiltPosition = 60;
+int currentPanPosition = 95;
+int currentTiltPosition = 45;
 
 int leftPWM = 0;
 int rightPWM = 0;
