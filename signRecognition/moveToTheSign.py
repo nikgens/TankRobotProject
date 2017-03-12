@@ -28,7 +28,7 @@ cameraResolution = (640, 480)
 camera = PiCamera()
 camera.resolution = cameraResolution
 camera.framerate = 90
-#camera.brightness = 60
+camera.brightness = 60
 camera.rotation = 180
 rawCapture = PiRGBArray(camera, size=cameraResolution)
 # allow the camera to warmup
@@ -476,14 +476,16 @@ def findTrafficSign():
     # move servos. send command to the arduino
     movePanTilt(1,currentPan)
     movePanTilt(2,currentTilt)
-    time.sleep(0.2)
+    time.sleep(2)
+
+    lastDetectedTrafficSign = None
     
     if args['color']:
         lower = np.array([v1_min, v2_min, v3_min])
         upper = np.array([v1_max, v2_max, v3_max])
     else:
         # define range HSV for blue color of the traffic sign
-        lower = np.array([80,100,100])
+        lower = np.array([80,0,0])
         upper = np.array([130,255,255])
 
     while True:
@@ -554,19 +556,43 @@ def findTrafficSign():
             # find center of the rectangle
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
 
-            if largestArea > frameArea*0.30:
+            if largestArea > frameArea*0.15:
                 moveMotors(127,127) #127 is mapped to 0 on Arduino
                 print("Big sign to close")
+                time.sleep(0.5)
+                if lastDetectedTrafficSign == 'Turn Right':
+                    #right
+                    moveMotors(255,0)
+                    time.sleep(0.39)
+                    moveMotors(127,127)
+                    print("Turned to the right")
+                    time.sleep(0.5)
+                elif lastDetectedTrafficSign == 'Turn Left':
+                    #left
+                    moveMotors(0,255)
+                    time.sleep(0.35)
+                    moveMotors(127,127)
+                    print("Turned to the left")
+                    time.sleep(0.5)
+                elif lastDetectedTrafficSign == 'Turn Back':
+                    #reverse_right
+                    moveMotors(255,0)
+                    time.sleep(0.73)
+                    moveMotors(127,127)
+                    print("Turned back")
+                    time.sleep(0.5)
+                elif lastDetectedTrafficSign == 'Move Straight':
+                    print("Go, go, go")
 
             else:
                 # count error with PID to move to the sign direction
-                pid = pidController(center[0], halfFrameWidth, 0.4, 0, 0)
+                pid = pidController(center[0], halfFrameWidth, 0.5, 0, 0)
  
                 # if error with "-", then we need to slow down left motor, else - right
                 if pid < 0:
-                    moveMotors(MAX_MOTOR_SPEED + pid, MAX_MOTOR_SPEED)
+                    moveMotors(MAX_MOTOR_SPEED + pid, MAX_MOTOR_SPEED + pid*0.1)
                 else:
-                    moveMotors(MAX_MOTOR_SPEED, MAX_MOTOR_SPEED - pid)
+                    moveMotors(MAX_MOTOR_SPEED - pid*0.1, MAX_MOTOR_SPEED - pid)
             
             # draw contour of the found rectangle on  the original image   
             cv2.drawContours(frame,[largestRect],0,(0,0,255),2)
@@ -579,8 +605,10 @@ def findTrafficSign():
 			
 	    # use function to detect the sign on the found rectangle
             detectedTrafficSign = identifyTrafficSign(warped)
-            #print(detectedTrafficSign)
-
+            print('detectedTrafficSign', detectedTrafficSign)
+            if detectedTrafficSign is not None:
+                lastDetectedTrafficSign = detectedTrafficSign
+            print('lastDetectedTrafficSign', lastDetectedTrafficSign)
 	    # write the description of the sign on the original image
             cv2.putText(frame, detectedTrafficSign, tuple(largestRect[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         
