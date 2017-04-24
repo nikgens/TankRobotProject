@@ -765,15 +765,6 @@ def followTheTrafficSigns():
 
 
 def moveToTheObject():
-    if args['color']:
-        lower = np.array([v1_min, v2_min, v3_min])
-        upper = np.array([v1_max, v2_max, v3_max])
-    else:
-        # define the lower and upper boundaries of the "orange"
-        # ball in the HSV color space, then initialize the
-        # list of tracked points
-        lower = np.array([50,70,70])
-        upper = np.array([70,255,255])
 
     while True:
         # The use_video_port parameter controls whether the camera's image or video port is used 
@@ -789,21 +780,18 @@ def moveToTheObject():
         hsv = cv2.cvtColor(frame_to_thresh, cv2.COLOR_BGR2HSV)
             
         kernel = np.ones((5,5),np.uint8)
-        # for red color we need to masks.
         mask = cv2.inRange(hsv, lower, upper)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-        # find contours in the mask and initialize the current
-        # (x, y) center of the ball
+        # find contours in the mask and initialize the current (x, y) center of the ball
         cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
         center = None
      
         # only proceed if at least one contour was found
         if len(cnts) > 0:
             # find the largest contour in the mask, then use
-            # it to compute the minimum enclosing circle and
-            # centroid
+            # it to compute the minimum enclosing circle and centroid
             c = max(cnts, key=cv2.contourArea)
             M = cv2.moments(c)
             objectArea = M["m00"]
@@ -813,13 +801,13 @@ def moveToTheObject():
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
             # draw the center of the tracking object
             cv2.circle(frame, center, 5, (0, 0, 255), -1)
-            
-            if percentage < 10:
+
+            if percentage < 5:
                 moveMotors(MAX_MOTOR_SPEED, MAX_MOTOR_SPEED)
-            elif percentage > 20:
+                print ("Object is too far, move to the object. Percentage is {}".format(percentage))
+            elif percentage > 10:
                 moveMotors(255 - MAX_MOTOR_SPEED, 255 - MAX_MOTOR_SPEED)
-            else:
-                moveMotors(127,127)
+                print ("Object is too close, move from the object. Percentage is {}".format(percentage))
             
             # if there is object find calculate the pid value to move along the line
             pid = pidController(center[0], halfFrameWidth, 0.34, 0, 0)
@@ -877,7 +865,7 @@ def main():
         if args['color']:
             getColorFromCrop()
             #findHSVRange()
-        #moveToTheObject()
+        moveToTheObject()
         
         
 if __name__ == '__main__':
