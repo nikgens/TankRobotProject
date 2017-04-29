@@ -22,9 +22,7 @@ else:
 x_start, y_start, x_end, y_end = 0, 0, 0, 0
 cropping = False
 getROI = False
-refPt = []
-lower = np.array([])
-upper = np.array([])
+
 
 
 def click_and_crop(event, x, y, flags, param):
@@ -57,6 +55,7 @@ def click_and_crop(event, x, y, flags, param):
 def getColorFromCrop():
     lower = np.array([])
     upper = np.array([])
+    refPt = []
     global getROI
     cv2.namedWindow("image")
     cv2.setMouseCallback("image", click_and_crop)
@@ -69,6 +68,10 @@ def getColorFromCrop():
             frame = rawCapture.array
         else:
             ret, frame = camera.read()
+
+            if ret == False:
+                print('Failed to capture frame from camera. Check camera index in cv2.VideoCapture(0) \n')
+                break
         
         if not getROI:
 
@@ -82,7 +85,6 @@ def getColorFromCrop():
         else:
             cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), (0, 255, 0), 2)
             cv2.imshow("image", frame)
-
 
             # if there are two reference points, then crop the region of interest
             # from teh image and display it
@@ -106,7 +108,6 @@ def getColorFromCrop():
             # clear the stream in preparation for the next frame
             rawCapture.truncate(0)
 
-        #cv2.imshow('frame',frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             if functions.isRaspberry():
                 cv2.destroyAllWindows()
@@ -116,58 +117,8 @@ def getColorFromCrop():
 
 
 if __name__ == '__main__':
-    lower, upper = getColorFromCrop()
-    print(lower, upper)
-
-'''
-        if done:
-
-            blurred = cv2.GaussianBlur(frame, (11, 11), 0)
-            hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-
-            # construct a mask for the color from dictionary`1, then perform
-            # a series of dilations and erosions to remove any small
-            # blobs left in the mask
-            kernel = np.ones((9,9),np.uint8)
-            mask = cv2.inRange(hsv, lower, upper)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                    
-            # find contours in the mask and initialize the current
-            # (x, y) center of the ball
-            cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE)[-2]
-            center = None
-            
-            # only proceed if at least one contour was found
-            if len(cnts) > 0:
-                # find the largest contour in the mask, then use
-                # it to compute the minimum enclosing circle and
-                # centroid
-                c = max(cnts, key=cv2.contourArea)
-                ((x, y), radius) = cv2.minEnclosingCircle(c)
-                M = cv2.moments(c)
-                center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-            
-                # only proceed if the radius meets a minimum size. Correct this value for your obect's size
-                if radius > 0.5:
-                    # draw the circle and centroid on the frame,
-                    # then update the list of tracked points
-                    cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 0), 2)
-                    cv2.putText(frame, 'center: {}, {}'.format(int(x), int(y)), (int(x-radius),int(y-radius)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-
-                 
-            # show the frame to our screen
-            cv2.imshow("image", frame)
-
-        # clear the stream in preparation for the next frame
-        rawCapture.truncate(0)
-        
-        key = cv2.waitKey(1) & 0xFF
-        # if the 'q' key is pressed, stop the loop
-        if key == ord("q"):
-            cv2.destroyAllWindows()
-            break
-        elif key == ord("r"):
-            getROI = False
-'''
+    try:
+        lower, upper = getColorFromCrop()
+        print(lower, upper)
+    except TypeError:
+        print('Nothing was captured\n')
