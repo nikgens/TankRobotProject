@@ -5,6 +5,7 @@ import functions
 if functions.isRaspberry():
     from picamera.array import PiRGBArray
     from picamera import PiCamera
+    import time
     # initialize the camera and grab a reference to the raw camera capture
     camera = PiCamera()
     camera.resolution = (640, 480)
@@ -94,6 +95,10 @@ def getColorFromCrop():
          
             lower = np.array([hsvRoi[:,:,0].min(), hsvRoi[:,:,1].min(), hsvRoi[:,:,2].min()])
             upper = np.array([hsvRoi[:,:,0].max(), hsvRoi[:,:,1].max(), hsvRoi[:,:,2].max()])
+            if functions.isRaspberry():
+                cv2.destroyAllWindows()
+            else:
+                camera.release()
             return lower, upper
 
         
@@ -103,8 +108,10 @@ def getColorFromCrop():
 
         #cv2.imshow('frame',frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            camera.release()
-            cv2.destroyAllWindows()
+            if functions.isRaspberry():
+                cv2.destroyAllWindows()
+            else:
+                camera.release()
             break
 
 
