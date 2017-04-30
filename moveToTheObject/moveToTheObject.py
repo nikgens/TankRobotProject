@@ -213,8 +213,12 @@ def calculateAnglesToMove(coordinates):
     
     # calculate angle that must be add/subtract to/from current servos position to reach
     # the center of the frame with centroid. 6 pix is the approximate value for 1 degree servo movement for (320, 240) frame
-    changePanSeroAngleBy = differenceInX/12
-    changeTiltSeroAngleBy = differenceInY/12
+    if camera.resolution == (640, 480):
+        changePanSeroAngleBy = differenceInX/12
+        changeTiltSeroAngleBy = differenceInY/12
+    elif camera.resolution == (320, 240):
+        changePanSeroAngleBy = differenceInX/6
+        changeTiltSeroAngleBy = differenceInY/6
 
     if changePanSeroAngleBy > 0:
         currentPan += abs(changePanSeroAngleBy)

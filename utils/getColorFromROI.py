@@ -72,7 +72,7 @@ def getColorFromCrop():
             if ret == False:
                 print('Failed to capture frame from camera. Check camera index in cv2.VideoCapture(0) \n')
                 break
-        
+ 
         if not getROI:
 
             if not cropping:
@@ -93,8 +93,7 @@ def getColorFromCrop():
             roi = frame[refPt[0][1]:refPt[1][1], refPt[0][0]:refPt[1][0]]
 
             hsvRoi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            #print('min H = {}, min S = {}, min V = {}; max H = {}, max S = {}, max V = {}'.format(hsvRoi[:,:,0].min(), hsvRoi[:,:,1].min(), hsvRoi[:,:,2].min(), hsvRoi[:,:,0].max(), hsvRoi[:,:,1].max(), hsvRoi[:,:,2].max()))
-         
+
             lower = np.array([hsvRoi[:,:,0].min(), hsvRoi[:,:,1].min(), hsvRoi[:,:,2].min()])
             upper = np.array([hsvRoi[:,:,0].max(), hsvRoi[:,:,1].max(), hsvRoi[:,:,2].max()])
             if functions.isRaspberry():
